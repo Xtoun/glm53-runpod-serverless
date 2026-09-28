@@ -1,74 +1,99 @@
-# GLM-5.3 Flash RunPod Serverless Panel
+# GLM-5.3 Flash on RunPod Serverless
 
-Web control panel + llama.cpp backend for **huihui-ai/GLM-5.3-Flash-abliterated-GGUF** on RunPod Serverless.
+Minimal RunPod Serverless image for:
 
-Designed for a single H200 141 GB worker. The panel starts before the model is downloaded, lets you choose the Hugging Face repo/quant and runtime parameters, downloads the selected GGUF to persistent storage, then starts/stops/restarts llama-server.
+`huihui-ai/GLM-5.3-Flash-abliterated-GGUF`
+
+There is **no web panel**. The container automatically downloads the selected GGUF quant to the RunPod Network Volume and starts the OpenAI-compatible `llama-server` API.
+
+## Recommended RunPod configuration
+
+Use **Deploy from a GitHub repository**:
+
+- Branch: `main`
+- Dockerfile: `/Dockerfile`
+- Mode: **Load balancer**
+- Health endpoint: `/health`
+- GPU: **H200 141 GB**
+- Min workers: `0` for scale-to-zero
+- Max workers: `1`
+- Network Volume mounted at: `/runpod-volume`
+
+The server listens on port `8000`.
 
 ## Defaults
 
-- Model repo: `huihui-ai/GLM-5.3-Flash-abliterated-GGUF`
-- Quant: `UD-IQ1_S`
-- Context per parallel slot: `204800`
-- Parallel slots: `4`
-- Total llama.cpp context: `819200`
-- KV cache: `q8_0 / q8_0`
-- GPU layers: `999`
-- Flash Attention: enabled
+```env
+MODEL_REPO=huihui-ai/GLM-5.3-Flash-abliterated-GGUF
+MODEL_QUANT=UD-IQ1_S
 
-With llama.cpp, the server context is shared between parallel slots. The panel therefore multiplies **context per slot × parallel slots** automatically.
+CONTEXT_PER_SLOT=204800
+PARALLEL=4
 
-## RunPod
+GPU_LAYERS=999
+KV_CACHE_K=q8_0
+KV_CACHE_V=q8_0
+FLASH_ATTN=on
 
-Create an endpoint with **Deploy from a GitHub repository** and select this repository.
+BATCH_SIZE=2048
+UBATCH_SIZE=512
+PORT=8000
+MODEL_ROOT=/runpod-volume/models
+```
 
-Recommended:
-- GPU: 141 GB H200
-- Min workers: 0 for scale-to-zero, or 1 if you need the panel to stay reachable continuously
-- Max workers: 1
-- Network Volume mounted at `/runpod-volume`
-- HTTP/container port: `8000`
+With the defaults, llama.cpp receives a total context pool of:
 
-Optional environment variables:
+`204800 × 4 = 819200 tokens`
+
+This gives up to four parallel slots, each with a target maximum of about 200K tokens.
+
+## Persistent model storage
+
+The GGUF is downloaded to:
+
+`/runpod-volume/models`
+
+On later cold starts, `hf download` reuses the existing files instead of downloading the full model again.
+
+## Hugging Face token
+
+The default model is public, so an HF token should not normally be necessary.
+
+If you use a private/gated model, add `HF_TOKEN` as a RunPod Secret.
+
+## Optional variables
 
 ```env
-PANEL_PORT=8000
-MODEL_ROOT=/runpod-volume/models
-STATE_DIR=/runpod-volume/glm53-panel
-HF_TOKEN=
-CLOUDFLARED_ENABLED=true
+EXTRA_ARGS=
 ```
 
-For a gated/private Hugging Face model, store `HF_TOKEN` as a RunPod Secret.
+`EXTRA_ARGS` is appended to the `llama-server` command.
 
-## First start
+## OpenAI-compatible API
 
-The container prints lines similar to:
+RunPod Load Balancer routes requests directly to `llama-server`.
+
+Useful paths:
 
 ```text
-PANEL USER: admin
-PANEL PASSWORD: <random>
-API KEY: glm_<random>
-CLOUDFLARE PANEL: https://xxxxx.trycloudflare.com
-OPENAI BASE URL: https://xxxxx.trycloudflare.com/v1
+/health
+/v1/models
+/v1/chat/completions
+/v1/completions
 ```
 
-Open the panel, authenticate with `admin` and the generated password, configure the model, click **Download**, then **Start model**.
+Use the RunPod Load Balancer endpoint as the base URL in a client that supports an OpenAI-compatible API.
 
-## Cursor
+## Scale-to-zero
 
-Use:
+With `Min workers = 0`, RunPod can shut the H200 worker down when idle.
 
-```text
-Base URL: https://xxxxx.trycloudflare.com/v1
-API Key:  glm_...
-```
+When a new request arrives:
 
-The API is OpenAI-compatible and proxies requests to llama-server.
+1. RunPod starts the worker.
+2. The GGUF is read from the Network Volume.
+3. llama.cpp loads the model into VRAM.
+4. `/health` becomes ready.
+5. RunPod routes traffic to the worker.
 
-## Serverless note
-
-With Min Workers = 0 the worker can be destroyed after idle time. The Network Volume keeps the downloaded model and saved configuration, but the Cloudflare Quick Tunnel URL and randomly generated credentials change after every cold start.
-
-## llama.cpp build
-
-The Dockerfile builds current `ggml-org/llama.cpp` `master` with CUDA enabled. You can override the build-time `LLAMA_CPP_REF` with another branch or tag if you need to pin a known-good GLM-5.3 build.
+The model does not need to be downloaded again unless the Network Volume is removed or the selected quant changes.
