@@ -69,6 +69,6 @@ The API is OpenAI-compatible and proxies requests to llama-server.
 
 With Min Workers = 0 the worker can be destroyed after idle time. The Network Volume keeps the downloaded model and saved configuration, but the Cloudflare Quick Tunnel URL and randomly generated credentials change after every cold start.
 
-## GLM-5.3 llama.cpp support
+## llama.cpp build
 
-At the time this project was created, upstream GLM-5.3/\`glm5next\` support was still pending. The Dockerfile builds the GLM-support pull request by default. Override `LLAMA_CPP_PR` at build time if a newer implementation is required.
+The Dockerfile builds current `ggml-org/llama.cpp` `master` with CUDA enabled. You can override the build-time `LLAMA_CPP_REF` with another branch or tag if you need to pin a known-good GLM-5.3 build.
